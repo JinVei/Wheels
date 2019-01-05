@@ -50,7 +50,7 @@ namespace twin_star {
     public:
         using connection_closed_handle          = std::function<void(Connection& connection)>;
         using connection_receive_packet_handle  = std::function<void(Connection& connection, string_sptr)>;
-        using filter_handle                     = std::function<bool(Connection&, boost::asio::streambuf&, boost::asio::streambuf&)>;
+        using filter_handle                     = std::function<bool(Connection&, boost::asio::streambuf&)>;
 
     private:
         friend class ConnectionListener;
@@ -61,7 +61,6 @@ namespace twin_star {
         connection_closed_handle         m_closed_handler;
 
         boost::asio::streambuf           m_receive_buf;
-        boost::asio::streambuf           m_filter_packet;
         bool                             m_live_flag        = true;
         std::string                      m_error_message;
         std::list<string_sptr>           m_send_data_list;

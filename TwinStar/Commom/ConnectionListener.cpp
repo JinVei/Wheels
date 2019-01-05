@@ -71,7 +71,7 @@ void twin_star::ConnectionListener::Connection::receive_callback() {
         bool filter_done_flag = false;
         while (m_current_fileter_number < m_filter_list.size())
         {
-            filter_done_flag = m_filter_list[m_current_fileter_number](*this, m_receive_buf, m_filter_packet);
+            filter_done_flag = m_filter_list[m_current_fileter_number](*this, m_receive_buf);
             if (filter_done_flag)
                 m_current_fileter_number++;
             else
@@ -85,8 +85,8 @@ void twin_star::ConnectionListener::Connection::receive_callback() {
     }
 
     if (m_receive_handler) {
-        string_sptr packet(new string(boost::asio::buffers_begin(m_filter_packet.data()), 
-                                        boost::asio::buffers_begin(m_filter_packet.data())));
+        string_sptr packet(new string(boost::asio::buffers_begin(m_receive_buf.data()),
+            boost::asio::buffers_begin(m_receive_buf.data())));
 
         m_receive_handler(*this, packet);
     }
@@ -128,7 +128,6 @@ auto twin_star::ConnectionListener::Connection::add_filter(filter_handle filter_
 void twin_star::ConnectionListener::Connection::reset_buf_and_filter()
 {
     m_receive_buf.consume(m_receive_buf.size());
-    m_filter_packet.consume(m_filter_packet.size());
     m_current_fileter_number = 0;
 }
 
