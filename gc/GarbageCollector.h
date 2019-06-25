@@ -1,8 +1,9 @@
 #ifndef __GARBAGECOLLECTOR_H_
 #define __GARBAGECOLLECTOR_H_
-#include <map>
+
 #include <list>
 #include <functional>
+
 //no thread safa
 class GarbageCollector;
 
@@ -23,12 +24,14 @@ public:
     }
 
     base_gcobject_ref(char* mem) {
-        _object_mem = mem;
+        if(mem == 0)
+            _object_mem = (char*)&_null_ref;
+        else
+            _object_mem = mem;
     }
 
     base_gcobject_ref(char* mem, base_gcobject_ref& owner) : base_gcobject_ref(mem) {
-        if(owner._object_mem != (char*)&_null_ref)
-            owner._sub_ref_list.push_back(*this);
+        owner._sub_ref_list.push_back(*this);
     }
 
     base_gcobject_ref(base_gcobject_ref&& other) {
@@ -97,6 +100,9 @@ public:
     gcobject_ref(char* mem, base_gcobject_ref& owner) : base_gcobject_ref((char*)mem, owner)
     {}
 
+    gcobject_ref(nullptr_t null, base_gcobject_ref& owner) : base_gcobject_ref(null, owner)
+    {}
+
     gcobject_ref(T* mem) : base_gcobject_ref((char*)mem)
     {}
 
@@ -125,6 +131,9 @@ public:
     T& operator* () {
         return *((T*)_object_mem);
     }
+    T* operator-> () {
+        return (T*)_object_mem;
+    }
 
     static void gcobject_destructor(void* object_mem) {
         ((T*)object_mem)->~T();
@@ -133,103 +142,14 @@ public:
 
 class GarbageCollector {
 public :
-    void clean_gcobject() {
-        size_t new_gc_object_addr;
-        size_t destructor;
-        size_t object_len;
-        char*  gcobject_addr;
+    void clean_gcobject();
+    void mark_gcobject(std::list<base_gcobject_ref>& root);
+    void update_reference(std::list<base_gcobject_ref>& root);
+    char* allocate_memory(size_t object_size, size_t destructor_addr);
+    void set_root_refs_list(std::list<base_gcobject_ref>& refs_list);
+    void set_root_refs_list(std::list<base_gcobject_ref>&& refs_list);
 
-        char* old_begin_addr = m_memory[m_current_mem_index];
-        char* old_end_addr = m_avaliable_mem_addr;
-
-        m_current_mem_index = (m_current_mem_index + 1) % 2;
-        m_avaliable_mem_addr = m_memory[m_current_mem_index];
-
-        //2019/6/22 如何标志和清理，如何将标志的对象移动到新地址
-        //先调用mark标志对象
-        //而后清理没有标志的对象，并且把标志的对象移动到新地址（在旧地址处记录新地址）
-        //更新gc对象的引用
-        mark_gcobject(m_root_refs);
-
-        while(old_begin_addr < old_end_addr){
-            new_gc_object_addr = *((size_t*)old_begin_addr);
-            old_begin_addr += sizeof(size_t);
-
-            destructor = *((size_t*)old_begin_addr);
-            old_begin_addr += sizeof(size_t);
-
-            object_len = *((size_t*)old_begin_addr);
-            old_begin_addr += sizeof(size_t);
-
-            gcobject_addr = old_begin_addr;
-            old_begin_addr += object_len;
-
-            if (new_gc_object_addr == 0) {
-                ((gcobject_destructor_t)destructor) ((void*)gcobject_addr);
-            }
-            else {
-                *((size_t*)(new_gc_object_addr - 3 * sizeof(size_t))) = 0;
-                *((size_t*)(new_gc_object_addr - 2 * sizeof(size_t))) = destructor;
-                *((size_t*)(new_gc_object_addr - sizeof(size_t)))     = object_len;
-                memcpy((void*)new_gc_object_addr, (void*)gcobject_addr, object_len);
-                
-            }
-        }
-
-        update_reference(m_root_refs);
-    }
-    void mark_gcobject(std::list<base_gcobject_ref>& root) {
-        for (auto& ref : root) {
-            size_t* new_gcobjectaddr_solt = (size_t*)(ref._object_mem - 3 * sizeof(size_t));
-            size_t gcobject_size = *((size_t*)ref._object_mem - sizeof(size_t));
-
-            if (*new_gcobjectaddr_solt == 0) {
-                size_t new_allocated_addr = (size_t)allocate_memory(gcobject_size, 0);
-                *new_gcobjectaddr_solt = new_allocated_addr;
-            }
-        }
-    }
-
-    void update_reference(std::list<base_gcobject_ref>& root) {
-        for (auto& ref : root) {
-            size_t* new_gcobjectaddr_solt = (size_t*)(ref._object_mem - 3 * sizeof(size_t));
-            ref._object_mem = (char*)(*new_gcobjectaddr_solt);
-        }
-    }
-
-    char* allocate_memory(size_t size, size_t destructor_addr) {
-        size_t allocated_size = size + sizeof(size_t)+ sizeof(size_t) + sizeof(size_t);
-        char* allocated_mem_addr;
-
-        if ((m_avaliable_mem_addr + allocated_size) >= m_mem_end[m_current_mem_index]) {
-            //m_root_refs.clear();
-            if (m_set_ref_root_handler)
-                m_set_ref_root_handler(m_root_refs);
-            else
-                ;//print err log
-
-            clean_gcobject();
-
-            if ((m_avaliable_mem_addr + allocated_size) >= m_mem_end[m_current_mem_index]) {
-                //print err
-                return nullptr;
-            }
-        }
-
-        *((size_t*)m_avaliable_mem_addr) = 0x0000;
-        m_avaliable_mem_addr += sizeof(size_t);
-
-        *((size_t*)m_avaliable_mem_addr) = destructor_addr;
-        m_avaliable_mem_addr += sizeof(size_t);
-
-        *((size_t*)m_avaliable_mem_addr) = size;
-        m_avaliable_mem_addr += sizeof(size_t);
-
-        allocated_mem_addr = m_avaliable_mem_addr;
-        m_avaliable_mem_addr += size;
-
-        return allocated_mem_addr;
-    }
+    GarbageCollector(char* mem, size_t size);
 
     template<typename ClassType, typename... Args>
     auto gcobject_creator(Args&&... args) -> gcobject_ref<ClassType> {
@@ -240,28 +160,6 @@ public :
 
         gcobject_ref<ClassType> object_ref(object_addr);
         return object_ref;
-    }
-
-    void set_root_refs_list(std::list<base_gcobject_ref>& refs_list) {
-        m_root_refs = refs_list;
-    }
-
-    void set_root_refs_list(std::list<base_gcobject_ref>&& refs_list) {
-        m_root_refs = std::move(refs_list);
-    }
-
-    GarbageCollector(char* mem, size_t size) {
-        if (size < 2) return;
-
-        m_memory[0] = mem;
-        m_mem_end[0] = mem + size / 2;
-
-        m_memory[1] = mem + size / 2;
-        m_mem_end[0] = mem + size - 1;
-
-        m_current_mem_index = 0;
-
-        m_avaliable_mem_addr = m_memory[0];
     }
 
 public:
