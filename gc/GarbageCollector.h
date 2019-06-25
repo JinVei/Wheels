@@ -6,8 +6,11 @@
 //no thread safa
 class GarbageCollector;
 
+using gcobject_destructor_t = void(*) (void*);
+
 class base_gcobject_ref {
     friend GarbageCollector;
+
 public:
     virtual ~base_gcobject_ref() { }
 
@@ -23,7 +26,7 @@ public:
         _object_mem = mem;
     }
 
-    base_gcobject_ref(char* mem, base_gcobject_ref& owner) :base_gcobject_ref(mem) {
+    base_gcobject_ref(char* mem, base_gcobject_ref& owner) : base_gcobject_ref(mem) {
         if(owner._object_mem != (char*)&_null_ref)
             owner._sub_ref_list.push_back(*this);
     }
@@ -39,7 +42,6 @@ public:
     base_gcobject_ref(base_gcobject_ref* other) : base_gcobject_ref(*other) 
     {}
 
-protected:
     base_gcobject_ref& operator= (nullptr_t null) {
         _object_mem = (char*) &_null_ref;
         _sub_ref_list.clear();
@@ -66,15 +68,13 @@ protected:
         _sub_ref_list.push_back(gcobject_ref);
     }
 
-public:
-    //base_gcobject_ref*                                  _ref_owner = nullptr;//
+protected:
+
     char*                                               _object_mem = (char*) &_null_ref;
-    //std::map<base_gcobject_ref*, base_gcobject_ref*>    _sub_ref;
     std::list<base_gcobject_ref>    _sub_ref_list;
 
     static long long _null_ref;
 
-    using gcobject_destructor_t = void (*) (void*);
 };
 
 template<class T>
@@ -109,7 +109,7 @@ public:
     }
 
     bool expired() {
-        return _object_mem==_null_ref ? true : false;
+        return _object_mem == (char*)&_null_ref ? true : false;
     }
 
     T& operator= (T&& other) {
@@ -122,7 +122,7 @@ public:
         return *this;
     }
 
-    T& operator* () {//when -men ref nullptr
+    T& operator* () {
         return *((T*)_object_mem);
     }
 
@@ -138,8 +138,6 @@ public :
         size_t destructor;
         size_t object_len;
         char*  gcobject_addr;
-        //base_gcobject_ref::gcobject_destructor_t t;
-
 
         char* old_begin_addr = m_memory[m_current_mem_index];
         char* old_end_addr = m_avaliable_mem_addr;
@@ -167,12 +165,12 @@ public :
             old_begin_addr += object_len;
 
             if (new_gc_object_addr == 0) {
-                ((base_gcobject_ref::gcobject_destructor_t)destructor) ((void*)gcobject_addr);
+                ((gcobject_destructor_t)destructor) ((void*)gcobject_addr);
             }
             else {
                 *((size_t*)(new_gc_object_addr - 3 * sizeof(size_t))) = 0;
-                memcpy((void*)(new_gc_object_addr - 2 * sizeof(size_t)), (void*)(gcobject_addr - 2 * sizeof(size_t)), sizeof(size_t));
-                memcpy((void*)(new_gc_object_addr - sizeof(size_t)), (void*)(gcobject_addr - sizeof(size_t)), sizeof(size_t));
+                *((size_t*)(new_gc_object_addr - 2 * sizeof(size_t))) = destructor;
+                *((size_t*)(new_gc_object_addr - sizeof(size_t)))     = object_len;
                 memcpy((void*)new_gc_object_addr, (void*)gcobject_addr, object_len);
                 
             }
@@ -184,8 +182,11 @@ public :
         for (auto& ref : root) {
             size_t* new_gcobjectaddr_solt = (size_t*)(ref._object_mem - 3 * sizeof(size_t));
             size_t gcobject_size = *((size_t*)ref._object_mem - sizeof(size_t));
-            size_t new_allocated_addr = (size_t)allocate_memory(gcobject_size, 0);
-            *new_gcobjectaddr_solt = new_allocated_addr;
+
+            if (*new_gcobjectaddr_solt == 0) {
+                size_t new_allocated_addr = (size_t)allocate_memory(gcobject_size, 0);
+                *new_gcobjectaddr_solt = new_allocated_addr;
+            }
         }
     }
 
@@ -231,11 +232,13 @@ public :
     }
 
     template<typename ClassType, typename... Args>
-    auto gcobject_creator(base_gcobject_ref& owner, Args... args) -> gcobject_ref<ClassType> {
-        char* object_addr = allocate_memory(sizeof(ClassType), (size_t)(gcobject_ref<ClassType>::gcobject_destructor));
-        new(object_addr) ClassType(args...);
+    auto gcobject_creator(Args&&... args) -> gcobject_ref<ClassType> {
 
-        gcobject_ref<ClassType> object_ref(object_addr, owner);
+        char* object_addr = allocate_memory(sizeof(ClassType), (size_t)(gcobject_ref<ClassType>::gcobject_destructor));
+
+        new(object_addr) ClassType(std::forward<Args>(args)...);
+
+        gcobject_ref<ClassType> object_ref(object_addr);
         return object_ref;
     }
 
@@ -261,6 +264,7 @@ public :
         m_avaliable_mem_addr = m_memory[0];
     }
 
+public:
     char*       m_memory[2];
     char*       m_mem_end[2];
 
