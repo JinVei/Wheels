@@ -1,12 +1,50 @@
 #include "GarbageCollector.h"
+using namespace jinvei;
 
 long long base_gcobject_ref::_null_ref = 0;
 
+void gcobject::put_sub_ref(base_gcobject_ref* gcobject_ref) {
+    _sub_ref_list.push_back(gcobject_ref);
+}
+
+base_gcobject_ref::base_gcobject_ref() {
+    _object_mem = (char*)&_null_ref;
+}
+
+base_gcobject_ref::base_gcobject_ref(gcobject* owner) : base_gcobject_ref() {
+    owner->put_sub_ref(this);
+}
+
+base_gcobject_ref::base_gcobject_ref(nullptr_t null) : base_gcobject_ref()
+{ }
+
+base_gcobject_ref::base_gcobject_ref(char* mem) {
+    if (mem == 0)
+        _object_mem = (char*)&_null_ref;
+    else
+        _object_mem = mem;
+}
+
+base_gcobject_ref& base_gcobject_ref::operator= (nullptr_t null) {
+    _object_mem = (char*)&_null_ref;
+    return *this;
+}
+
+base_gcobject_ref& base_gcobject_ref::operator= (base_gcobject_ref& other) {
+    _object_mem = other._object_mem;
+    return *this;
+}
+
+bool base_gcobject_ref::expired() {
+    return _object_mem == (char*)&_null_ref ? true : false;
+}
+
 void GarbageCollector::clean_gcobject() {
+    size_t gc_object_addr;
     size_t new_gc_object_addr;
     size_t destructor;
     size_t object_len;
-    char*  gcobject_addr;
+    char*  object_addr;
 
     char* old_begin_addr = m_memory[m_current_mem_index];
     char* old_end_addr = m_avaliable_mem_addr;
@@ -18,9 +56,14 @@ void GarbageCollector::clean_gcobject() {
     //先调用mark标志对象
     //而后清理没有标志的对象，并且把标志的对象移动到新地址（在旧地址处记录新地址）
     //更新gc对象的引用
-    mark_gcobject(m_root_refs);
+    for (auto& ref : m_root_refs){
+        mark_gcobject(ref->_object_mem);
+    }
 
     while (old_begin_addr < old_end_addr) {
+        gc_object_addr = *((size_t*)old_begin_addr);
+        old_begin_addr += sizeof(size_t);
+
         new_gc_object_addr = *((size_t*)old_begin_addr);
         old_begin_addr += sizeof(size_t);
 
@@ -30,17 +73,18 @@ void GarbageCollector::clean_gcobject() {
         object_len = *((size_t*)old_begin_addr);
         old_begin_addr += sizeof(size_t);
 
-        gcobject_addr = old_begin_addr;
+        object_addr = old_begin_addr;
         old_begin_addr += object_len;
 
         if (new_gc_object_addr == 0) {
-            ((gcobject_destructor_t)destructor) ((void*)gcobject_addr);
+            ((gcobject_destructor_t)destructor) ((void*)object_addr);
         }
         else {
+            *((size_t*)(new_gc_object_addr - 4 * sizeof(size_t))) = (size_t)(new_gc_object_addr + (object_addr - gc_object_addr));
             *((size_t*)(new_gc_object_addr - 3 * sizeof(size_t))) = 0;
             *((size_t*)(new_gc_object_addr - 2 * sizeof(size_t))) = destructor;
             *((size_t*)(new_gc_object_addr - sizeof(size_t))) = object_len;
-            memcpy((void*)new_gc_object_addr, (void*)gcobject_addr, object_len);
+            memcpy((void*)new_gc_object_addr, (void*)object_addr, object_len);
 
         }
     }
@@ -48,30 +92,35 @@ void GarbageCollector::clean_gcobject() {
     update_reference(m_root_refs);
 }
 
-void GarbageCollector::mark_gcobject(std::list<base_gcobject_ref>& root) {
-    for (auto& ref : root) {
-        size_t* new_gcobjectaddr_solt = (size_t*)(ref._object_mem - 3 * sizeof(size_t));
-        size_t gcobject_size = *((size_t*)(ref._object_mem - sizeof(size_t)));
+void GarbageCollector::mark_gcobject(char* object_addr) {
+    size_t gcobject_addr =  *((size_t*)(object_addr - 4 * sizeof(size_t)));
+    size_t* new_gcobjectaddr_solt = (size_t*)(object_addr - 3 * sizeof(size_t));
+    size_t gcobject_size = *((size_t*)(object_addr - sizeof(size_t)));
 
-        //base_gcobject_ref* gcobject = dynamic_cast<base_gcobject_ref*>(ref._object_mem);
+    gcobject* gcobject_ptr = (gcobject*)gcobject_addr;
 
-        if (*new_gcobjectaddr_solt == 0) {
-            size_t new_allocated_addr = (size_t)allocate_memory(gcobject_size, 0);
-            *new_gcobjectaddr_solt = new_allocated_addr;
+    if (*new_gcobjectaddr_solt == 0) {
+        size_t new_allocated_addr = (size_t)allocate_memory(gcobject_size, 0);
+        *new_gcobjectaddr_solt = new_allocated_addr;
+    }
+
+    if (gcobject_addr != 0) {
+        for (auto& ref : gcobject_ptr->_sub_ref_list) {
+            if(!ref->expired())
+                mark_gcobject(ref->_object_mem);
         }
-        mark_gcobject(ref._sub_ref_list);
     }
 }
 
-void GarbageCollector::update_reference(std::list<base_gcobject_ref>& root) {
+void GarbageCollector::update_reference(std::list<base_gcobject_ref*>& root) {
     for (auto& ref : root) {
-        size_t* new_gcobjectaddr_solt = (size_t*)(ref._object_mem - 3 * sizeof(size_t));
-        ref._object_mem = (char*)(*new_gcobjectaddr_solt);
+        size_t* new_gcobjectaddr_solt = (size_t*)(ref->_object_mem - 3 * sizeof(size_t));
+        ref->_object_mem = (char*)(*new_gcobjectaddr_solt);
     }
 }
 
 char* GarbageCollector::allocate_memory(size_t object_size, size_t destructor_addr) {
-    size_t allocated_size = object_size + sizeof(size_t) + sizeof(size_t) + sizeof(size_t);
+    size_t allocated_size = object_size + 4 * sizeof(size_t);
     char* allocated_mem_addr;
 
     if ((m_avaliable_mem_addr + allocated_size) >= m_mem_end[m_current_mem_index]) {
@@ -92,6 +141,9 @@ char* GarbageCollector::allocate_memory(size_t object_size, size_t destructor_ad
     *((size_t*)m_avaliable_mem_addr) = 0x0000;
     m_avaliable_mem_addr += sizeof(size_t);
 
+    *((size_t*)m_avaliable_mem_addr) = 0x0000;
+    m_avaliable_mem_addr += sizeof(size_t);
+
     *((size_t*)m_avaliable_mem_addr) = destructor_addr;
     m_avaliable_mem_addr += sizeof(size_t);
 
@@ -103,10 +155,11 @@ char* GarbageCollector::allocate_memory(size_t object_size, size_t destructor_ad
 
     return allocated_mem_addr;
 }
-void GarbageCollector::set_root_refs_list(std::list<base_gcobject_ref>& refs_list) {
+
+void GarbageCollector::set_root_refs_list(std::list<base_gcobject_ref*>& refs_list) {
     m_root_refs = refs_list;
 }
-void GarbageCollector::set_root_refs_list(std::list<base_gcobject_ref>&& refs_list) {
+void GarbageCollector::set_root_refs_list(std::list<base_gcobject_ref*>&& refs_list) {
     m_root_refs = std::move(refs_list);
 }
 
