@@ -78,15 +78,13 @@ namespace jinvei {
         GarbageCollector(char* mem, size_t size);
 
         template<typename ClassType, typename... Args>
-        auto gcobject_creator(Args&&... args) -> gcobject_ref<ClassType> {
+        auto creator(Args&&... args) -> gcobject_ref<ClassType> {
             gcobject* gcobject_addr = 0;
             char* object_addr = allocate_memory(sizeof(ClassType), (size_t)(gcobject_ref<ClassType>::gcobject_destructor));
             if (object_addr != nullptr) {
                 new(object_addr) ClassType(std::forward<Args>(args)...);
 
                 *((size_t*)(object_addr - 4 * sizeof(size_t))) = (size_t)gcobject_addr;
-
-                gcobject_ref<ClassType> object_ref(object_addr);
 
                 return gcobject_ref<ClassType>(object_addr);;
             }
@@ -95,7 +93,7 @@ namespace jinvei {
         }
 
         template<typename gcobject, typename ClassType, typename... Args>
-        auto gcobject_creator(Args&&... args) -> gcobject_ref<ClassType> {
+        auto creator(Args&&... args) -> gcobject_ref<ClassType> {
             gcobject* gcobject_addr = 0;
             char* object_addr = allocate_memory(sizeof(ClassType), (size_t)(gcobject_ref<ClassType>::gcobject_destructor));
             if (object_addr != nullptr) {
@@ -104,8 +102,6 @@ namespace jinvei {
                 gcobject_addr = static_cast<gcobject*>((ClassType*)object_addr);
 
                 *((size_t*)(object_addr - 4 * sizeof(size_t))) = (size_t)gcobject_addr;
-
-                gcobject_ref<ClassType> object_ref(object_addr);
 
                 return gcobject_ref<ClassType>(object_addr);;
             }

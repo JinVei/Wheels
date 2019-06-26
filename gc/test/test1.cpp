@@ -58,18 +58,19 @@ public:
 void main() {
     GarbageCollector gc(new char[1000], 1000);
 
-    gcobject_ref<A> a_ref = gc.gcobject_creator<gcobject,A>(99,22,33);
-    (*a_ref).b_ref = gc.gcobject_creator<B>();
+    gcobject_ref<A> a_ref = gc.creator<gcobject,A>(99,22,33);
+    (*a_ref).b_ref = gc.creator<B>();
 
-    gcobject_ref<C> c_ref1 = gc.gcobject_creator<C>();
+    gcobject_ref<C> c_ref1 = gc.creator<C>();
 
     a_ref->c_ref = c_ref1;
 
     c_ref1 = nullptr;
 
-    gcobject_ref<D> d_ref = gc.gcobject_creator<D>();
+    gcobject_ref<D> d_ref = gc.creator<D>();
 
-    gcobject_ref<std::vector<E>> vec_ref = gc.gcobject_creator<vector<E>>(vector<E>{E(1,2,3)});
+    vector<E> vec({ E(1, 2, 3) });
+    gcobject_ref<std::vector<E>> vec_ref = gc.creator<vector<E>>(vec);
 
     cout << (*vec_ref)[0]._a << endl;
 
