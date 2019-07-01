@@ -58,7 +58,7 @@ public:
 void main() {
     GarbageCollector gc(new char[1000], 1000);
 
-    gcobject_ref<A> a_ref = gc.creator<gcobject,A>(99,22,33);
+    gcobject_ref<A> a_ref = gc.creator<A>(99,22,33);
     (*a_ref).b_ref = gc.creator<B>();
 
     gcobject_ref<C> c_ref1 = gc.creator<C>();
