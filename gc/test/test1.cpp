@@ -77,7 +77,11 @@ void main() {
     cout << a_ref->w << endl;
 
     gc.set_root_refs_list({ &a_ref, /*&d_ref*/ });
-    gc.clean_gcobject();
+    gc.clean();
+
+    gc.clean();
+
+    gc.clean();
 
     getchar();
 }

@@ -14,6 +14,7 @@ namespace jinvei {
         friend GarbageCollector;
         void put_sub_ref(base_gcobject_ref* gcobject_ref);
     protected:
+        void update_sub_ref(base_gcobject_ref* old_ref, base_gcobject_ref* new_ref);
         std::list<base_gcobject_ref* >    _sub_ref_list;
     };
 
@@ -33,8 +34,9 @@ namespace jinvei {
         bool expired();
 
     protected:
-        char*                                               _object_mem = (char*)&_null_ref;
-        static long long _null_ref;
+
+        char*               _object_mem = (char*)&_null_ref;
+        static long long    _null_ref;
 
     };
 
@@ -67,8 +69,15 @@ namespace jinvei {
     };
 
     class GarbageCollector {
+        struct object_header {
+            size_t gc_object_addr;
+            size_t new_object_addr;
+            size_t destructor;
+            size_t object_len;
+        };
+
     public:
-        void clean_gcobject();
+        void clean();
         void mark_gcobject(char* object_addr);
         void update_reference(std::list<base_gcobject_ref*>& root);
         char* allocate_memory(size_t object_size, size_t destructor_addr);
@@ -95,8 +104,8 @@ namespace jinvei {
                 new(object_addr) ClassType(std::forward<Args>(args)...);
 
                 gcobject_addr = get_gcobject_addr<ClassType>(object_addr, (ClassType*)0);
-
-                *((size_t*)(object_addr - 4 * sizeof(size_t))) = (size_t)gcobject_addr;
+                object_header& header = *((object_header*)(object_addr - sizeof(header)));
+                header.gc_object_addr = (size_t)gcobject_addr;
 
                 return gcobject_ref<ClassType>(object_addr);;
             }

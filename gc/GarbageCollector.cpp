@@ -7,6 +7,16 @@ void gcobject::put_sub_ref(base_gcobject_ref* gcobject_ref) {
     _sub_ref_list.push_back(gcobject_ref);
 }
 
+void gcobject::update_sub_ref(base_gcobject_ref* old_ref, base_gcobject_ref* new_ref) {
+    for (auto it = _sub_ref_list.begin(); it != _sub_ref_list.end(); ++it) {
+        if (old_ref == *it) {
+            _sub_ref_list.erase(it);
+            break;
+        }
+    }
+    _sub_ref_list.push_back(new_ref);
+}
+
 base_gcobject_ref::base_gcobject_ref() {
     _object_mem = (char*)&_null_ref;
 }
@@ -39,12 +49,8 @@ bool base_gcobject_ref::expired() {
     return _object_mem == (char*)&_null_ref ? true : false;
 }
 
-void GarbageCollector::clean_gcobject() {
-    size_t gc_object_addr;
-    size_t new_gc_object_addr;
-    size_t destructor;
-    size_t object_len;
-    char*  object_addr;
+void GarbageCollector::clean() {
+    char*  old_object_addr;
 
     char* old_begin_addr = m_memory[m_current_mem_index];
     char* old_end_addr = m_avaliable_mem_addr;
@@ -61,30 +67,37 @@ void GarbageCollector::clean_gcobject() {
     }
 
     while (old_begin_addr < old_end_addr) {
-        gc_object_addr = *((size_t*)old_begin_addr);
-        old_begin_addr += sizeof(size_t);
+        object_header& old_object_header = *((object_header*)old_begin_addr);
+        old_begin_addr += sizeof(object_header);
 
-        new_gc_object_addr = *((size_t*)old_begin_addr);
-        old_begin_addr += sizeof(size_t);
+        old_object_addr = old_begin_addr;
+        old_begin_addr += old_object_header.object_len;
 
-        destructor = *((size_t*)old_begin_addr);
-        old_begin_addr += sizeof(size_t);
-
-        object_len = *((size_t*)old_begin_addr);
-        old_begin_addr += sizeof(size_t);
-
-        object_addr = old_begin_addr;
-        old_begin_addr += object_len;
-
-        if (new_gc_object_addr == 0) {
-            ((gcobject_destructor_t)destructor) ((void*)object_addr);
+        if (old_object_header.new_object_addr == 0) {
+            ((gcobject_destructor_t)old_object_header.destructor) ((void*)old_object_addr);
         }
         else {
-            *((size_t*)(new_gc_object_addr - 4 * sizeof(size_t))) = (size_t)(new_gc_object_addr + (object_addr - gc_object_addr));
-            *((size_t*)(new_gc_object_addr - 3 * sizeof(size_t))) = 0;
-            *((size_t*)(new_gc_object_addr - 2 * sizeof(size_t))) = destructor;
-            *((size_t*)(new_gc_object_addr - sizeof(size_t))) = object_len;
-            memcpy((void*)new_gc_object_addr, (void*)object_addr, object_len);
+            object_header& new_object_header = *((object_header*)(old_object_header.new_object_addr - sizeof(object_header)));
+            new_object_header = old_object_header;
+            new_object_header.new_object_addr = 0;
+
+            if (old_object_header.gc_object_addr != 0) {
+                new_object_header.gc_object_addr = (size_t)(old_object_header.new_object_addr + (old_object_header.gc_object_addr - (size_t)old_object_addr));
+            }
+            else {
+                new_object_header.gc_object_addr = 0;
+            }
+
+            memcpy((void*)old_object_header.new_object_addr, (void*)old_object_addr, old_object_header.object_len);
+
+            if (old_object_header.gc_object_addr != 0) {
+                gcobject* new_gc_object = (gcobject*)(new_object_header.gc_object_addr);
+                gcobject* old_gc_object = (gcobject*)(old_object_header.gc_object_addr);
+                new ((char*)&(new_gc_object->_sub_ref_list)) std::list<base_gcobject_ref*>(old_gc_object->_sub_ref_list);
+                for (auto& ref : old_gc_object->_sub_ref_list) {
+                    new_gc_object->update_sub_ref(ref, (base_gcobject_ref*)((size_t)old_object_header.new_object_addr + ((size_t)ref - (size_t)old_object_addr )));
+                }
+            }
 
         }
     }
@@ -93,18 +106,15 @@ void GarbageCollector::clean_gcobject() {
 }
 
 void GarbageCollector::mark_gcobject(char* object_addr) {
-    size_t gcobject_addr =  *((size_t*)(object_addr - 4 * sizeof(size_t)));
-    size_t* new_gcobjectaddr_solt = (size_t*)(object_addr - 3 * sizeof(size_t));
-    size_t gcobject_size = *((size_t*)(object_addr - sizeof(size_t)));
+    object_header& header = *((object_header*)((size_t)object_addr - sizeof(header)));
+    gcobject* gcobject_ptr = (gcobject*)header.gc_object_addr;
 
-    gcobject* gcobject_ptr = (gcobject*)gcobject_addr;
-
-    if (*new_gcobjectaddr_solt == 0) {
-        size_t new_allocated_addr = (size_t)allocate_memory(gcobject_size, 0);
-        *new_gcobjectaddr_solt = new_allocated_addr;
+    if (header.new_object_addr == 0) {
+        size_t new_allocated_addr = (size_t)allocate_memory(header.object_len, 0);
+        header.new_object_addr = new_allocated_addr;
     }
 
-    if (gcobject_addr != 0) {
+    if (gcobject_ptr != 0) {
         for (auto& ref : gcobject_ptr->_sub_ref_list) {
             if(!ref->expired())
                 mark_gcobject(ref->_object_mem);
@@ -114,13 +124,19 @@ void GarbageCollector::mark_gcobject(char* object_addr) {
 
 void GarbageCollector::update_reference(std::list<base_gcobject_ref*>& root) {
     for (auto& ref : root) {
-        size_t* new_gcobjectaddr_solt = (size_t*)(ref->_object_mem - 3 * sizeof(size_t));
-        ref->_object_mem = (char*)(*new_gcobjectaddr_solt);
+        object_header& old_header = *((object_header*)(ref->_object_mem - sizeof(object_header)));
+        ref->_object_mem = (char*)(old_header.new_object_addr);
+
+        object_header& new_header = *((object_header*)(ref->_object_mem - sizeof(object_header)));
+        if (new_header.gc_object_addr != 0) {
+            gcobject* _gcobject = (gcobject*)new_header.gc_object_addr;
+            update_reference(_gcobject->_sub_ref_list);
+        }
     }
 }
 
 char* GarbageCollector::allocate_memory(size_t object_size, size_t destructor_addr) {
-    size_t allocated_size = object_size + 4 * sizeof(size_t);
+    size_t allocated_size = object_size + sizeof(object_header);
     char* allocated_mem_addr;
 
     if ((m_avaliable_mem_addr + allocated_size) >= m_mem_end[m_current_mem_index]) {
@@ -130,7 +146,7 @@ char* GarbageCollector::allocate_memory(size_t object_size, size_t destructor_ad
         else
             ;//print err log
 
-        clean_gcobject();
+        clean();
 
         if ((m_avaliable_mem_addr + allocated_size) >= m_mem_end[m_current_mem_index]) {
             //print err
@@ -138,17 +154,12 @@ char* GarbageCollector::allocate_memory(size_t object_size, size_t destructor_ad
         }
     }
 
-    *((size_t*)m_avaliable_mem_addr) = 0x0000;
-    m_avaliable_mem_addr += sizeof(size_t);
-
-    *((size_t*)m_avaliable_mem_addr) = 0x0000;
-    m_avaliable_mem_addr += sizeof(size_t);
-
-    *((size_t*)m_avaliable_mem_addr) = destructor_addr;
-    m_avaliable_mem_addr += sizeof(size_t);
-
-    *((size_t*)m_avaliable_mem_addr) = object_size;
-    m_avaliable_mem_addr += sizeof(size_t);
+    object_header& header = *((object_header*)m_avaliable_mem_addr);
+    header.gc_object_addr = 0;
+    header.new_object_addr = 0;
+    header.destructor = destructor_addr;
+    header.object_len = object_size;
+    m_avaliable_mem_addr += sizeof(object_header);
 
     allocated_mem_addr = m_avaliable_mem_addr;
     m_avaliable_mem_addr += object_size;
