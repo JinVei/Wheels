@@ -37,6 +37,11 @@ int main() {
     Value val7 = val5;
     val5.Set(A());
     Value val8 = std::move(val5);
+    
+    val8 = 6;
+    std::cout<<val8.Get<int>()<<std::endl;
+    val8 = "tech";
+    std::cout<<val8.Get<const char*>()<<std::endl;
 
     return 0;
 }

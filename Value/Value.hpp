@@ -1,13 +1,21 @@
 #include <typeinfo>
 #include <stdexcept>
+
 class Value {
     void* _val = nullptr;
     size_t _ty_hash = 0;
     void (*_destructor)(void*)  = nullptr;
     void (*_copy) (Value& lhs, Value& rhs)  = nullptr;
 public:
-    template<class Ty>
+    template<typename Ty>
     void Set(Ty val) {
+        const std::type_info& ty_info = typeid(Ty);
+        size_t ty_hash = ty_info.hash_code();
+        if (ty_hash == _ty_hash) {
+            *((Ty*)_val) = val;
+            return;
+        }
+
         if (_destructor != nullptr) {
             _destructor(_val);
         }
@@ -32,16 +40,15 @@ public:
             }
         };
 
-        const std::type_info& ty_info = typeid(Ty);
-        _ty_hash = ty_info.hash_code();
+        _ty_hash = ty_hash;
     }
 
-    template<class Ty>
+    template<typename Ty>
     Ty Get(){
         const std::type_info& ty_info = typeid(Ty);
         size_t ty_hash = ty_info.hash_code();
         if (ty_hash != _ty_hash) {
-            throw std::runtime_error("Can't get type");;
+            throw std::runtime_error("Can't get type");
         }
         return *((Ty*)_val);
     }
@@ -62,12 +69,24 @@ public:
     Value(Value& rhs) {
         LhsAssign(rhs);
     }
+
+    template<typename Ty>
+    Value (Ty val) {
+        this->Set(val);
+    }
+
     Value operator=(Value&& rhs){
         RhsAssign(std::move(rhs));
         return *this;
     }
     Value operator=(Value& rhs){
         LhsAssign(rhs);
+        return *this;
+    }
+
+    template<typename Ty>
+    Value operator=(Ty& val){
+        this->Set(val);
         return *this;
     }
 
