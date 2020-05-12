@@ -1,11 +1,10 @@
 #include <typeinfo>
-#include <functional>
-
+#include <stdexcept>
 class Value {
     void* _val = nullptr;
     size_t _ty_hash = 0;
-    std::function<void (void*)> _destructor = nullptr;
-    std::function<void (Value& lhs, Value& rhs)> _copy = nullptr;
+    void (*_destructor)(void*)  = nullptr;
+    void (*_copy) (Value& lhs, Value& rhs)  = nullptr;
 public:
     template<class Ty>
     void Set(Ty val) {
