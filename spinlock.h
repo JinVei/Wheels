@@ -1,3 +1,5 @@
+#pragma once
+
 #include <atomic>
 
 inline void spin_lock(std::atomic_flag& lock) {
