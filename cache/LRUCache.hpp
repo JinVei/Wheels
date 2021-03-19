@@ -5,6 +5,8 @@
 #include <memory>
 #include <iterator>
 
+// No thread safe
+// Caller must correctly implement copy constructor and assign operator for DataType
 template<typename KeyType, typename DataType>
 class LRUCache {
 public:
@@ -35,13 +37,9 @@ public:
         }
 
         auto dat_it = it->second;
-        auto cache_dat = *dat_it;
-        _buf_list.erase(dat_it);
-        _buf_list.push_front(cache_dat);
-    
-        _idx[key] = _buf_list.begin();
+        _buf_list.splice(_buf_list.begin(), _buf_list, dat_it);
 
-        return cache_dat.data;
+        return dat_it->data;
     }
 
     void Set(KeyType key, DataType& data) {
@@ -49,15 +47,20 @@ public:
             auto evited_dat_it = std::prev(_buf_list.end(), 1);
             auto evited_dat_idx_it = _idx.find(evited_dat_it->key);
             
-            if (evited_dat_idx_it != _idx.end()) {
-                _idx.erase(evited_dat_idx_it);
-            }
-            _buf_list.erase(evited_dat_it);
+            _idx.erase(evited_dat_idx_it);
+
+            auto free_buf_it = evited_dat_it;
+            free_buf_it->key = key;
+            *(free_buf_it->data) = data;
+
+            _buf_list.splice(_buf_list.begin(), _buf_list, free_buf_it);
+        } else {
+            CacheData cache_dat;
+            cache_dat.key = key;
+            cache_dat.data = data_ref_t(new DataType(data));
+            _buf_list.push_front(cache_dat);
         }
-        CacheData cache_dat;
-        cache_dat.key = key;
-        cache_dat.data = data_ref_t(new DataType(data));
-        _buf_list.push_front(cache_dat);
+
         _idx[key] = _buf_list.begin();
     }
 
@@ -66,16 +69,20 @@ public:
             auto evited_dat_it = std::prev(_buf_list.end(), 1);
             auto evited_dat_idx_it = _idx.find(evited_dat_it->key);
             
-            if (evited_dat_idx_it != _idx.end()) {
-                _idx.erase(evited_dat_idx_it);
-            }
-            _buf_list.erase(evited_dat_it);
+            _idx.erase(evited_dat_idx_it);
+
+            auto free_buf_it = evited_dat_it;
+            free_buf_it->key = key;
+            *(free_buf_it->data) = std::move(data);
+
+            _buf_list.splice(_buf_list.begin(), _buf_list, free_buf_it);
+        } else {
+            CacheData cache_dat;
+            cache_dat.key = key;
+            cache_dat.data = data_ref_t(new DataType(std::move(data)));
+            _buf_list.push_front(cache_dat);
         }
 
-        CacheData cache_dat;
-        cache_dat.key = key;
-        cache_dat.data = data_ref_t(new DataType(std::move(data)));
-         _buf_list.push_front(cache_dat);
         _idx[key] = _buf_list.begin();
     }
 };
